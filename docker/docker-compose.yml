@@ -1,0 +1,59 @@
+networks:
+  # Air-gapped: Docker refuses to add a default route for a network created
+  # with internal: true, so containers on this network cannot reach the
+  # internet and cannot be reached from it, regardless of published ports.
+  lab_internal:
+    driver: bridge
+    internal: true
+
+services:
+  loki:
+    image: grafana/loki:2.9.6
+    container_name: lab_loki
+    restart: unless-stopped
+    networks:
+      - lab_internal
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:2.9.6
+    container_name: lab_promtail
+    restart: unless-stopped
+    networks:
+      - lab_internal
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - ../agents:/var/log/agents:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: lab_open_webui
+    restart: unless-stopped
+    networks:
+      - lab_internal
+    ports:
+      - "127.0.0.1:${OPEN_WEBUI_PORT:-3000}:8080"
+    environment:
+      - WEBUI_SECRET_KEY=${OPEN_WEBUI_SECRET_KEY}
+      # Points at LM Studio running on the HOST, not inside this air-gapped
+      # network. host.docker.internal resolves to the host's loopback from
+      # inside the container without opening any external route.
+      - OPENAI_API_BASE_URL=http://host.docker.internal:1234/v1
+      - OPENAI_API_KEY=${LM_STUDIO_API_KEY:-lm-studio}
+      - WEBUI_AUTH=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - open_webui_data:/app/backend/data
+
+volumes:
+  loki_data:
+  open_webui_data:

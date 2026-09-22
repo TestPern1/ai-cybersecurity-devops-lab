@@ -1,0 +1,32 @@
+---
+# Brings the lab's Docker Compose stack up (or verifies it, under --check).
+# Deliberately scoped to this one action — the Deployment Agent's job is to
+# report on the stack, not to run arbitrary host-level changes.
+
+- name: Deploy local air-gapped lab stack
+  hosts: lab_local
+  gather_facts: true
+
+  vars:
+    compose_dir: "{{ playbook_dir }}/../../docker"
+
+  tasks:
+    - name: Verify docker is installed
+      ansible.builtin.command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Report docker version
+      ansible.builtin.debug:
+        msg: "{{ docker_version.stdout }}"
+
+    - name: Bring up the lab stack
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: "{{ compose_dir }}"
+      register: compose_result
+      changed_when: "'Started' in compose_result.stdout or 'Created' in compose_result.stdout"
+
+    - name: Report compose output
+      ansible.builtin.debug:
+        msg: "{{ compose_result.stdout_lines }}"

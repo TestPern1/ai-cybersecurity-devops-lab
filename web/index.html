@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Cybersecurity DevOps Lab</title>
+</head>
+<body>
+  <div id="app" class="max-w-5xl mx-auto px-6 py-10">
+    <header class="mb-8">
+      <h1 class="text-2xl font-bold">AI Cybersecurity DevOps Lab</h1>
+      <p class="text-gray-400 mt-1">
+        Local, air-gapped multi-agent workflow: Docker → Promtail/Loki → Trivy → Ansible → Qwen agents.
+        Everything on this page runs against <code>127.0.0.1</code> only.
+      </p>
+    </header>
+
+    <section class="mb-10">
+      <h2 class="text-lg font-semibold mb-3">Architecture</h2>
+      <div id="architecture-diagram" class="bg-surface rounded-lg p-4 overflow-x-auto"></div>
+    </section>
+
+    <section class="mb-10">
+      <h2 class="text-lg font-semibold mb-3">Agent Status</h2>
+      <div id="agent-status" class="grid gap-3 sm:grid-cols-2"></div>
+    </section>
+
+    <section class="mb-10">
+      <h2 class="text-lg font-semibold mb-3">Active CVE Alerts</h2>
+      <div id="cve-alerts" class="bg-surface rounded-lg divide-y divide-gray-800"></div>
+    </section>
+
+    <section class="mb-10">
+      <h2 class="text-lg font-semibold mb-3">Remediation Log</h2>
+      <div id="remediation-log" class="bg-surface rounded-lg divide-y divide-gray-800"></div>
+    </section>
+
+    <section>
+      <h2 class="text-lg font-semibold mb-3">Counter-Swarm: Active Defense Log</h2>
+      <p class="text-xs text-gray-500 mb-3">Simulated traffic vs. a defensive swarm — synthetic IPs, mock tokens/keys, local state file only. No real firewall or credentials touched.</p>
+      <div id="counter-swarm-log" class="bg-surface rounded-lg divide-y divide-gray-800"></div>
+    </section>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
