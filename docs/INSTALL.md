@@ -167,7 +167,31 @@ runs in this VM.
 This keeps the "local only" security intent intact — LM Studio's server is reachable only from this
 VM, not the internet or your LAN, even though it's no longer bound to literal `127.0.0.1`.
 
-## 10. Bring up the air-gapped Docker stack (inside the VM)
+## 10. Block internet egress for the Docker network (firewalld, inside the VM)
+
+The lab's Docker network (`lab_internal`, fixed subnet `172.28.1.0/24`) is **not** created with
+Docker's `internal: true` flag, because that flag also silently breaks published ports (see the
+comment in `docker/docker-compose.yml` if you want the full story — short version: `internal: true`
+disables the same iptables chain that host-port publishing needs, so `ports:` stops working with no
+error). Instead, "these containers can't reach the internet" is enforced one layer down, at the
+host firewall, against that fixed subnet:
+
+```bash
+sudo firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 \
+  -s 172.28.1.0/24 ! -d 192.168.56.0/24 -j REJECT
+sudo firewall-cmd --reload
+```
+
+This blocks the Docker network from reaching anywhere except your host-only subnet (where LM Studio
+lives) — no internet, no LAN, while leaving host->container published ports (which don't go through
+this `FORWARD` path) untouched. Adjust `192.168.56.0/24` if your host-only network differs.
+
+Verify it's actually blocking:
+```bash
+docker exec lab_open_webui ping -c1 -W2 8.8.8.8   # should fail/time out
+```
+
+## 11. Bring up the Docker stack (inside the VM)
 
 `docker compose` only auto-loads a `.env` file from the directory you run it in — since `.env`
 lives at the repo root and `docker-compose.yml` lives in `docker/`, run this from the repo root
@@ -179,18 +203,26 @@ docker compose -f docker/docker-compose.yml --env-file .env up -d
 docker compose -f docker/docker-compose.yml --env-file .env ps
 ```
 
-Loki, Promtail, and Open-WebUI come up on the `lab_internal` network (`internal: true` — no
-outbound route for these containers), all published only to the VM's own `127.0.0.1`. The Windows
-port-forwarding rules from step 4 are what expose them to your Windows browser.
+Loki, Promtail, and Open-WebUI come up on the `lab_internal` network, egress-blocked by the
+firewalld rule above, all published only to the VM's own `127.0.0.1`. The Windows port-forwarding
+rules from step 4 are what expose them to your Windows browser.
 
-Confirm Open-WebUI can reach LM Studio:
+Confirm Open-WebUI can reach LM Studio (same `-f`/`--env-file` flags as above are required here too
+— a bare `docker compose exec ...` from the repo root will fail with "no configuration file
+provided" since `docker-compose.yml` isn't in this directory):
 ```bash
-docker compose exec open-webui getent hosts host.docker.internal
+docker compose -f docker/docker-compose.yml --env-file .env exec open-webui getent hosts host.docker.internal
+```
+This should print your host-only adapter's IP (e.g. `192.168.56.1`), not `172.17.0.1` (the
+container's own default bridge gateway) — if you see `172.17.0.1`, the container was created before
+`HOST_LM_STUDIO_IP` was set correctly in `.env`; fix `.env` and re-run with `--force-recreate`:
+```bash
+docker compose -f docker/docker-compose.yml --env-file .env up -d --force-recreate open-webui
 ```
 This should resolve to your host-only adapter IP (`192.168.56.1` by default). Then from Windows,
 visit `http://127.0.0.1:3000` and confirm it can see your local Qwen model.
 
-## 11. Run the agents (inside the VM)
+## 12. Run the agents (inside the VM)
 
 ```bash
 cd ../agents
@@ -209,7 +241,7 @@ python counter_swarm.py                        # Step 3: simulated counter-swarm
 `sandbox.py` runs its own disposable Docker containers — this works fine from inside the VM, since
 Docker-in-a-VM is standard, no nesting concerns here (unlike Docker-in-Docker).
 
-## 12. Run the dashboard (inside the VM, viewed from Windows)
+## 13. Run the dashboard (inside the VM, viewed from Windows)
 
 ```bash
 cd ../web

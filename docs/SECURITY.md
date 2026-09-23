@@ -6,8 +6,12 @@ not luck — follow this checklist every time, not just on the first commit.
 ## Design constraints (why this repo can be public)
 
 - **Air-gapped by design.** Every container in `docker/docker-compose.yml` runs on a Docker network
-  created with `internal: true` — Docker refuses to route traffic in or out of an internal network,
-  so there is no outbound path even if a container were compromised.
+  with a fixed subnet (`172.28.1.0/24`). Egress is blocked at the host firewall (`firewalld`, see
+  `docs/INSTALL.md` step 10) rather than via Docker's own `internal: true` flag — that flag also
+  silently disables published ports on the same network (confirmed while building this lab: the
+  port binding gets recorded but never actually opens), so it's incompatible with this project's
+  requirement to publish Open-WebUI/Loki to `127.0.0.1`. The firewalld rule achieves the same
+  "no outbound route" property without that conflict.
 - **Loopback-only binding.** Every exposed port (Open-WebUI, the web dashboard, Loki) is published
   as `127.0.0.1:<port>:<port>`, never `0.0.0.0:<port>:<port>` — nothing on this stack is reachable
   from another machine on your network, let alone the internet.

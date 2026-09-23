@@ -1,10 +1,23 @@
 networks:
-  # Air-gapped: Docker refuses to add a default route for a network created
-  # with internal: true, so containers on this network cannot reach the
-  # internet and cannot be reached from it, regardless of published ports.
+  # NOT internal:true. Docker's `internal: true` flag disables the iptables
+  # NAT/forwarding chain for the whole bridge — including the chain
+  # `docker-proxy` needs to publish a host port into a container. That means
+  # `internal: true` and `ports:` are mutually incompatible on the same
+  # network: Docker accepts the config silently, records the intended port
+  # binding, and then never actually opens it (confirmed while debugging this
+  # lab: `docker inspect`'s HostConfig.PortBindings showed the mapping, but
+  # NetworkSettings.Ports stayed null — the bind never happened).
+  #
+  # Egress ("no internet access from these containers") is instead enforced
+  # at the host firewall, one layer down, against this network's fixed
+  # subnet — see docs/INSTALL.md step 10 for the firewalld rule. That
+  # approach blocks outbound traffic without touching Docker's own inbound
+  # port-publishing plumbing, unlike `internal: true`.
   lab_internal:
     driver: bridge
-    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.1.0/24
 
 services:
   loki:

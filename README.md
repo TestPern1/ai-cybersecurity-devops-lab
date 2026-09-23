@@ -18,8 +18,9 @@ machine.
 
 ## Why this is safe to publish
 
-- **Air-gapped by design:** all containers run on a Docker network created with `internal: true`
-  (no outbound/inbound internet route).
+- **Air-gapped by design:** all containers run on a Docker network with a fixed subnet, with
+  internet egress blocked at the VM's host firewall (not Docker's `internal: true`, which turned
+  out to be incompatible with published ports — see docs/SECURITY.md).
 - **Loopback-only:** every service (Open-WebUI, Loki, the dashboard) binds strictly to
   `127.0.0.1` inside the VM; Windows only reaches them via explicit VirtualBox port-forward rules
   also scoped to `127.0.0.1`. LM Studio on the Windows host is reachable only from the VM's private
