@@ -41,18 +41,16 @@ DENYLIST_SUBSTRINGS = [
 
 def _strip_code_fence(text: str) -> str:
     """Models routinely wrap output in ```bash ... ``` fences even when told
-    not to (confirmed live: LM Studio's Qwen did this on the first real run).
-    Don't rely on the system prompt alone to prevent that — strip fences
-    defensively before parsing, the same "deterministic guard, not just a
-    polite ask" principle as the deny-list below.
+    not to (confirmed live: LM Studio's Qwen did this on the first real run —
+    and not just at the very start/end of the response, but with the closing
+    fence landing mid-response, right before the rationale text, which a
+    naive first-line/last-line strip misses). Don't rely on the system prompt
+    alone to prevent this — drop every line that's purely a fence marker,
+    wherever it lands, the same "deterministic guard, not just a polite ask"
+    principle as the deny-list below.
     """
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()[1:]  # drop opening fence (with language tag)
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]  # drop closing fence
-        text = "\n".join(lines).strip()
-    return text
+    lines = [ln for ln in text.strip().splitlines() if not ln.strip().startswith("```")]
+    return "\n".join(lines).strip()
 
 
 def propose_remediation(vulnerability_summary: str) -> tuple[str, str]:
