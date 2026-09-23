@@ -21,10 +21,12 @@ machine.
 - **Air-gapped by design:** all containers run on a Docker network with a fixed subnet, with
   internet egress blocked at the VM's host firewall (not Docker's `internal: true`, which turned
   out to be incompatible with published ports — see docs/SECURITY.md).
-- **Loopback-only:** every service (Open-WebUI, Loki, the dashboard) binds strictly to
-  `127.0.0.1` inside the VM; Windows only reaches them via explicit VirtualBox port-forward rules
-  also scoped to `127.0.0.1`. LM Studio on the Windows host is reachable only from the VM's private
-  host-only network, never from the LAN or internet — see docs/INSTALL.md step 9.
+- **Loopback-scoped, not LAN-exposed:** services (Open-WebUI, Loki, the dashboard) bind to all
+  interfaces *inside the VM* (VirtualBox's NAT can't reach a literal `127.0.0.1`-only bind — see
+  docs/SECURITY.md), but the VM itself is only reachable from Windows' own `127.0.0.1` via explicit
+  VirtualBox port-forward rules — nothing here is exposed to your LAN or the internet. LM Studio on
+  the Windows host is reachable only from the VM's private host-only network — see
+  docs/INSTALL.md step 9.
 - **No real secrets required:** the local LM Studio server needs no real API key; `.env.example`
   ships placeholder values only, `.env` is git-ignored.
 - **Pre-commit security checklist:** see [docs/SECURITY.md](docs/SECURITY.md) — followed before

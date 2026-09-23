@@ -12,9 +12,15 @@ not luck — follow this checklist every time, not just on the first commit.
   port binding gets recorded but never actually opens), so it's incompatible with this project's
   requirement to publish Open-WebUI/Loki to `127.0.0.1`. The firewalld rule achieves the same
   "no outbound route" property without that conflict.
-- **Loopback-only binding.** Every exposed port (Open-WebUI, the web dashboard, Loki) is published
-  as `127.0.0.1:<port>:<port>`, never `0.0.0.0:<port>:<port>` — nothing on this stack is reachable
-  from another machine on your network, let alone the internet.
+- **Loopback-scoped via the VM boundary, not literal 127.0.0.1 binds.** Inside the VM, services bind
+  to all interfaces (`0.0.0.0`), not `127.0.0.1` — VirtualBox's NAT port-forwarding delivers
+  Windows->VM traffic to the VM's real NIC, so a strict `127.0.0.1` bind inside the guest is
+  unreachable even with a correct forward rule (confirmed the hard way: TCP handshake succeeded,
+  HTTP request got reset, because nothing was listening on the interface the traffic actually
+  arrived on). The "not reachable from your LAN or the internet" property instead comes from the
+  VirtualBox network topology itself: NAT only exposes what's explicitly forwarded (to Windows'
+  own `127.0.0.1` — see docs/INSTALL.md step 4), and the host-only adapter has no route beyond this
+  one physical machine.
 - **No real secrets ever needed.** LM Studio's local server doesn't require a real API key (the
   placeholder `lm-studio` value satisfies the OpenAI SDK's "non-empty string" requirement only).
   Nothing in this stack talks to a paid or hosted API.

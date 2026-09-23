@@ -26,8 +26,18 @@ services:
     restart: unless-stopped
     networks:
       - lab_internal
+    # Bound to all interfaces inside the VM (not 127.0.0.1) so VirtualBox's
+    # NAT port-forwarding can reach it — NAT delivers forwarded traffic to
+    # the VM's real NIC, not its loopback, so a 127.0.0.1-only bind here is
+    # unreachable from Windows even with a correct port-forward rule (this
+    # cost real debugging time to track down: TCP handshake succeeded, but
+    # the VM kernel had nothing listening on the interface traffic arrived
+    # on, producing a reset mid-request). Actual exposure is still scoped by
+    # the VirtualBox boundary itself: only whatever's explicitly forwarded in
+    # docs/INSTALL.md step 4 (to Windows' own 127.0.0.1) or reachable via the
+    # private host-only network can reach this at all.
     ports:
-      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+      - "${LOKI_PORT:-3100}:3100"
     volumes:
       - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
@@ -52,8 +62,9 @@ services:
     restart: unless-stopped
     networks:
       - lab_internal
+    # See the comment on loki's `ports:` above — same reasoning.
     ports:
-      - "127.0.0.1:${OPEN_WEBUI_PORT:-3000}:8080"
+      - "${OPEN_WEBUI_PORT:-3000}:8080"
     environment:
       - WEBUI_SECRET_KEY=${OPEN_WEBUI_SECRET_KEY}
       # Points at LM Studio running on the Windows HOST machine, not inside
