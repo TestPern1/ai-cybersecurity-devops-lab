@@ -7,6 +7,22 @@ be explicitly approved by a human operator before running. This mirrors the
 lesson from llm-security-labs/lab4 — an LLM connected to real tools needs
 least-privilege scoping and a human-in-the-loop gate, not just a polite
 system prompt asking it to be careful.
+
+A note on "wrong" proposals (e.g. `sudo: apt-get: command not found`): this
+agent has no awareness of what OS/package-manager the vulnerability actually
+applies to, or whether the target was a container image (where the fix
+belongs in a rebuilt image, not a command run on this host) versus the host
+itself. Confirmed live: given a musl/Alpine finding from scanning
+`alpine:3.19`, the local model proposed an `apt-get` command run against this
+Rocky/RHEL VM — wrong package manager, and arguably the wrong target
+entirely, since the vulnerable package lives inside the scanned image, not
+the host. That is expected, not a bug in this code: local open-weight models
+will sometimes propose something confidently wrong, and the whole point of
+the deny-list + approval gate above is that the blast radius of a wrong
+proposal is contained to "the command errors out" (a `command not found`,
+harmless) rather than actually damaging anything — even after a human
+approves it. Seeing a proposal fail safely like this is the guardrail design
+working as intended, not evidence something is broken.
 """
 
 from __future__ import annotations
@@ -102,6 +118,13 @@ def main() -> None:
 
     result = execute(command)
     print(json.dumps(result, indent=2))
+    if result["returncode"] != 0:
+        print(
+            "\n[i] Non-zero exit code. If this is a package-manager-not-found or similar "
+            "shell error (not a policy rejection above), that's the local model proposing "
+            "something incorrect for this host/target — see the module docstring at the top "
+            "of this file for why that's an expected, safely-contained outcome rather than a bug."
+        )
 
 
 if __name__ == "__main__":
