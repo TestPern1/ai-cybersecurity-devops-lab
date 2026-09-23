@@ -186,9 +186,10 @@ This blocks the Docker network from reaching anywhere except your host-only subn
 lives) — no internet, no LAN, while leaving host->container published ports (which don't go through
 this `FORWARD` path) untouched. Adjust `192.168.56.0/24` if your host-only network differs.
 
-Verify it's actually blocking:
+Verify it's actually blocking (the container images here don't ship `ping`, so use `curl` with a
+short timeout instead):
 ```bash
-docker exec lab_open_webui ping -c1 -W2 8.8.8.8   # should fail/time out
+docker exec lab_open_webui curl -m 3 -sS http://8.8.8.8   # should time out / fail to connect
 ```
 
 ## 11. Bring up the Docker stack (inside the VM)
@@ -204,8 +205,13 @@ docker compose -f docker/docker-compose.yml --env-file .env ps
 ```
 
 Loki, Promtail, and Open-WebUI come up on the `lab_internal` network, egress-blocked by the
-firewalld rule above, all published only to the VM's own `127.0.0.1`. The Windows port-forwarding
-rules from step 4 are what expose them to your Windows browser.
+firewalld rule above. Their published ports bind to all interfaces *inside the VM* (not
+`127.0.0.1`) — VirtualBox's NAT delivers Windows->VM forwarded traffic to the VM's real NIC, not its
+loopback, so a `127.0.0.1`-only bind inside the guest is unreachable from Windows even with a
+correct forward rule (this one cost real debugging time: the TCP handshake succeeded, but the HTTP
+request got reset, because nothing was listening on the interface traffic actually arrived on). The
+Windows port-forwarding rules from step 4 are still what scope actual exposure — nothing here
+reaches your LAN or the internet, only Windows' own `127.0.0.1` via those explicit rules.
 
 Confirm Open-WebUI can reach LM Studio (same `-f`/`--env-file` flags as above are required here too
 — a bare `docker compose exec ...` from the repo root will fail with "no configuration file
@@ -224,8 +230,12 @@ visit `http://127.0.0.1:3000` and confirm it can see your local Qwen model.
 
 ## 12. Run the agents (inside the VM)
 
+`agents/common/llm_client.py` loads the repo-root `.env` automatically (via `python-dotenv`), so
+running an agent directly picks up the same `LM_STUDIO_BASE_URL` etc. as the Docker stack does — no
+manual `export`/`source .env` needed:
+
 ```bash
-cd ../agents
+cd agents
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -255,18 +265,77 @@ static site with no further network dependency.
 
 ## Troubleshooting
 
+Failure modes below are listed roughly in the order they're worth checking — several of them look
+identical from the browser (page won't load) but have different causes and fixes.
+
+- **VirtualBox: "Could not find Host Interface Networking driver" (E_FAIL 0x80004005) when creating
+  the host-only network:** the driver is usually present but *disabled* in Windows, not missing —
+  check `Get-NetAdapter | Where-Object { $_.InterfaceDescription -like "*VirtualBox*" }` and
+  `Enable-NetAdapter -Name "<name>"` if it shows `Disabled`. If the driver is genuinely missing,
+  repair the VirtualBox install (Control Panel → Programs → Oracle VM VirtualBox → Change/Repair).
+- **Mouse is inaccurate/unusable in the Rocky installer:** expected — Guest Additions (which fix
+  this) can't be installed until there's an OS to install them into. Navigate the installer with the
+  keyboard (`Tab`/`Space`/`Enter`/arrows) instead; this won't come up again once you're at a text
+  console, since the minimal install has no desktop environment to need a mouse for.
+- **SSH (`ssh -p 2222 ...`) fails with `kex_exchange_identification: read: Connection reset`:** the
+  TCP connection succeeded but nothing spoke SSH back — check the port-forward rule's guest port is
+  `22` (not `2222`), confirm `sudo systemctl status sshd` is active inside the VM, and check
+  `sudo firewall-cmd --list-services` includes `ssh`.
+- **`docker run --rm hello-world` fails with "permission denied ... docker.sock":** your shell
+  session predates the `usermod -aG docker` group change taking effect. Run `newgrp docker` (or log
+  out/back in over SSH) rather than re-running `usermod`.
+- **`git clone` fails with "Permission denied" creating the work tree dir:** you're likely in a
+  root-owned directory (e.g. `/usr/local`). `cd ~` first, then clone — the rest of this guide's `cd`
+  steps assume the repo landed in your home directory.
+- **An agent (e.g. `deployment_agent.py`) fails with `openai.APIConnectionError` /
+  `httpcore.ConnectError: [Errno 111] Connection refused`:** `agents/common/llm_client.py` fell back
+  to its hardcoded default (`http://127.0.0.1:1234/v1`), meaning your `.env` never got loaded — check
+  that `python-dotenv` installed correctly (`pip install -r requirements.txt` from `agents/`) and
+  that `.env` actually exists at the repo root (`ls ../.env` from inside `agents/`). If you see
+  `ValueError: Refusing to configure a non-local LM_STUDIO_BASE_URL` instead, your `.env` has a
+  public/non-private address in `LM_STUDIO_BASE_URL` — it should be a loopback address or a private
+  one like the host-only adapter's `192.168.56.1`, never a public IP.
+- **`OPEN_WEBUI_SECRET_KEY`/other `.env` values not taking effect, or `docker compose exec ...`
+  fails with "no configuration file provided":** `docker compose` only auto-loads `.env` from the
+  directory you run it in, and only finds `docker-compose.yml` if you point `-f` at it. Always run
+  compose commands from the repo root with both flags:
+  `docker compose -f docker/docker-compose.yml --env-file .env <subcommand>` — not a bare
+  `docker compose ...` from the repo root, and not `cd docker && docker compose ...` either.
+- **`docker compose ps` output looks garbled/truncated (e.g. `PORTS` column missing):** usually just
+  your terminal width wrapping the table oddly, not a real problem — confirm with
+  `docker port <container_name>` instead, which prints an unambiguous single-line mapping.
+- **A service's port binding doesn't seem to apply even after editing `.env`/`docker-compose.yml`
+  and re-running `up -d`:** Compose sometimes decides a container's config hash hasn't changed and
+  skips recreating it. Force it explicitly: `docker rm -f <container_name>` then
+  `docker compose -f docker/docker-compose.yml --env-file .env up -d --no-deps <service_name>`.
 - **Open-WebUI can't reach LM Studio:** confirm LM Studio's server is running with "Serve on Local
   Network" enabled (step 9.4), the Windows Firewall rule allows the host-only subnet (step 9.5), and
-  `docker compose exec open-webui getent hosts host.docker.internal` resolves to the right IP.
+  `docker compose -f docker/docker-compose.yml --env-file .env exec open-webui getent hosts host.docker.internal`
+  resolves to your host-only IP (e.g. `192.168.56.1`), not `172.17.0.1` (the container's own default
+  bridge gateway — means `HOST_LM_STUDIO_IP` wasn't set correctly when the container was created;
+  fix `.env` and `--force-recreate open-webui`).
 - **VM can't reach the internet during `dnf`/`npm install`:** confirm Adapter 1 is NAT and attached,
   and that the VM actually picked up a NAT-assigned address (`ip addr show` should show an
   interface in the `10.0.2.x` range in addition to the `192.168.56.x` host-only one).
-- **Windows browser can't reach `127.0.0.1:4321`/`:3000`/`:3100`:** re-check the port-forwarding
-  table in step 4 — a typo in host/guest port is the most common cause. Also confirm the service is
-  actually running inside the VM (`docker compose ps`, or the `npm run dev` terminal).
+- **From Windows: `Test-NetConnection` to a forwarded port succeeds, but the browser shows
+  `ERR_CONNECTION_RESET` (or `curl.exe` shows "Recv failure: Connection was reset"):** this means
+  the TCP handshake works but the actual HTTP exchange doesn't — almost always because the service
+  inside the VM is bound to `127.0.0.1` instead of `0.0.0.0`. VirtualBox's NAT delivers forwarded
+  traffic to the VM's real NIC, not its loopback, so a strict-loopback bind inside the guest can
+  never receive it. Check the service's bind address (`docker-compose.yml`'s `ports:` host-IP
+  prefix, or `web/vite.config.js`'s `host` setting) — both should already be `0.0.0.0`-equivalent in
+  this repo (no `127.0.0.1:` prefix); if you've customized either file, this is the first thing to
+  check.
+- **Windows browser can't reach `127.0.0.1:4321`/`:3000`/`:3100` at all (times out, not reset):**
+  re-check the port-forwarding table in step 4 — a typo in host/guest port is the most common cause.
+  Also confirm the service is actually running inside the VM
+  (`docker compose -f docker/docker-compose.yml --env-file .env ps`, or the `npm run dev` terminal),
+  and that the port-forward rule was added under **Adapter 1 (NAT)**, not Adapter 2 (host-only,
+  which has no port-forwarding UI since it's directly routable already).
 - **`docker compose up` fails to pull images:** the *first* pull of each image needs the VM's NAT
-  internet access — once pulled, `internal: true` only affects the running containers, not the
-  initial `docker pull`.
+  internet access — once pulled, the firewalld egress rule from step 10 only affects the running
+  containers' outbound traffic, not `docker pull` itself (which the daemon performs, not the
+  containers).
 - **Host-only adapter IP isn't `192.168.56.1`:** check **File → Tools → Network Manager** in
   VirtualBox for the actual IPv4 address of your host-only network, and use that value everywhere
   `192.168.56.1` appears in this guide, `.env`, and `docker-compose.yml`'s `HOST_LM_STUDIO_IP`
