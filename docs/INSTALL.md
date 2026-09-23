@@ -51,10 +51,22 @@ Network adapters (**Settings → Network**):
 - **Adapter 2:** Host-only Adapter → select `vboxnet0` — this is how the VM reaches LM Studio on
   Windows, and how Windows reaches the VM's services.
 
-Attach the Rocky 9 minimal ISO (**Settings → Storage** → add the `.iso` to the optical drive), boot
-the VM, and run through the Rocky installer. A minimal install (no desktop environment) is enough —
-everything here is command-line only; you'll view the dashboard from a browser on Windows, not
-inside the VM.
+Set both adapters' **Adapter Type** to **Paravirtualized Network (virtio-net)**, not the default
+Intel PRO/1000 emulation — Rocky 9's kernel has virtio drivers built in, and virtio-net has
+meaningfully less overhead than emulating real NIC hardware in software. No functional difference
+for this lab either way, just better performance.
+
+Attach the Rocky 9 minimal ISO (**Settings → Storage** → add the `.iso` to the optical drive). All
+the settings above live under **right-click the VM in VirtualBox Manager → Settings** — easy to miss
+if you're used to a different hypervisor's UI. When you boot, use the regular **Start** (normal, not
+headless) so you get a console window to watch the installer — pick **"Normal Start"** if you're
+asked, or use **"Detachable Start"** if you want the console window to stay open independently of
+the VirtualBox Manager window it launched from. Then run through the Rocky installer normally. A
+minimal install (no desktop environment) is enough — everything here is command-line only; you'll
+view the dashboard from a browser on Windows, not inside the VM. Note: the installer's mouse
+pointer will be inaccurate/unusable until Guest Additions are installed (which needs a running OS
+first) — navigate the installer with the keyboard (`Tab`/`Space`/`Enter`/arrow keys) instead; this
+won't matter again once you're at a text console.
 
 ## 4. Set up port forwarding (Windows -> VM)
 
@@ -63,7 +75,6 @@ inside the VM.
 
 | Name | Protocol | Host IP | Host Port | Guest IP | Guest Port |
 |---|---|---|---|---|---|
-| dashboard | TCP | 127.0.0.1 | 4321 | (leave blank) | 4321 |
 | open-webui | TCP | 127.0.0.1 | 3000 | (leave blank) | 3000 |
 | loki | TCP | 127.0.0.1 | 3100 | (leave blank) | 3100 |
 | ssh | TCP | 127.0.0.1 | 2222 | (leave blank) | 22 |
@@ -73,6 +84,15 @@ The `ssh` rule is optional but convenient for working in the VM from a Windows t
 
 These forwarding rules are scoped to `127.0.0.1` on the Windows side — nothing here becomes
 reachable from your LAN or the internet, consistent with the lab's loopback-only requirement.
+
+**No dashboard (4321) rule** — deliberately. VirtualBox's built-in NAT engine ("slirp") has a
+confirmed bug where certain HTTP responses through a NAT port-forward just hang forever (connects,
+sends the request, never gets a response back — not a refusal, a silent stall), while the exact same
+request works instantly over the host-only adapter instead. Loki/Open-WebUI's responses happened not
+to trigger it; the dashboard's did. Rather than fight VirtualBox's NAT engine, access the dashboard
+directly via the VM's **host-only IP** (see step 13) — this is no less secure than the NAT path,
+since host-only is already a private link reachable only from this one Windows machine, same
+reasoning as LM Studio's reachability in step 9.
 
 ## 5. Inside the VM: install Docker Engine
 
@@ -103,7 +123,9 @@ docker run --rm hello-world
 sudo dnf install -y ansible-core git python3 python3-pip
 
 curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | \
-  sh -s -- -b /usr/local/bin
+  sudo sh -s -- -b /usr/local/bin
+# sudo is required here — the install script writes to /usr/local/bin, which your
+# unprivileged user can't write to; without it the script fails silently on the copy step.
 
 trivy --version
 ```
@@ -279,9 +301,26 @@ npm install
 npm run dev
 ```
 
-Visit `http://127.0.0.1:4321` **from Windows** (the port-forward from step 4 routes it into the VM).
+**Visit the dashboard via the VM's host-only IP, not `127.0.0.1:4321`** — confirmed live: VirtualBox's
+NAT port-forward hangs indefinitely on this specific service's HTTP responses (a NAT-engine bug, not
+a project bug — see step 4's note), while the same request over the host-only adapter works
+instantly. Find the VM's host-only IP if you don't already have it from step 8:
+
+```bash
+ip addr show | grep 192.168.56
+```
+
+Then from Windows, visit `http://<that-ip>:4321` (e.g. `http://192.168.56.101:4321` — yours may
+differ; DHCP-assigned host-only IPs are usually stable across reboots but not guaranteed).
+
 `npm install` needs the VM's NAT/internet access; once built, `npm run preview` serves the compiled
-static site with no further network dependency.
+static site the same way (also reachable via the host-only IP), with no further network dependency.
+
+If you close the terminal running `npm run dev`, the dashboard stops. To keep it running detached:
+```bash
+nohup npm run dev > /tmp/vite.log 2>&1 &
+disown
+```
 
 ## Troubleshooting
 
@@ -348,6 +387,20 @@ identical from the browser (page won't load) but have different causes and fixes
   `sudo dnf remove -y nodejs npm nodejs-full-i18n nodejs-docs`, then install fresh from NodeSource
   (full commands in step 6). After upgrading Node, also do a clean `rm -rf node_modules
   package-lock.json && npm install` — modules built against the old Node version can linger.
+- **`web/package.json`'s `dev`/`preview` scripts hardcode `--host 127.0.0.1`:** don't reintroduce
+  this — CLI flags override `vite.config.js`, so a hardcoded `--host 127.0.0.1` silently undoes the
+  `0.0.0.0` bind `vite.config.js` sets (confirmed live: this exact regression happened once already).
+  The scripts should just be `"dev": "vite"` / `"preview": "vite preview"`, letting
+  `vite.config.js` be the single source of truth for host/port.
+- **Dashboard (`:4321`) hangs indefinitely from Windows via `127.0.0.1`, even though `curl` from
+  inside the VM (both `127.0.0.1` and the host-only IP) returns instantly:** this is a confirmed
+  VirtualBox NAT engine ("slirp") bug, not a project bug — some HTTP responses through the NAT
+  port-forward path just stall forever (TCP connects, request is sent, nothing ever comes back,
+  no error). Loki/Open-WebUI didn't trigger it; the dashboard's response did. Don't chase this
+  further — access the dashboard via the VM's host-only IP instead (`http://192.168.56.101:4321` or
+  whatever `ip addr show | grep 192.168.56` reports), per step 13. If Open-WebUI or Loki ever exhibit
+  the same symptom, the same host-only-IP workaround applies to them too
+  (`http://<host-only-ip>:3000` / `:3100`).
 - **From Windows: `Test-NetConnection` to a forwarded port succeeds, but the browser shows
   `ERR_CONNECTION_RESET` (or `curl.exe` shows "Recv failure: Connection was reset"):** this means
   the TCP handshake works but the actual HTTP exchange doesn't — almost always because the service
