@@ -20,6 +20,7 @@ from common.llm_client import ask
 SYSTEM_PROMPT = """You are a Remediation Agent. Given a vulnerability summary, propose a
 single concrete remediation command (e.g. an apt/dnf upgrade, a docker image bump).
 Output ONLY the shell command on the first line, followed by a one-sentence rationale.
+Do not use markdown formatting, code fences, or backticks anywhere in your response.
 Never propose a command that deletes data, modifies firewall rules, or targets
 anything outside the package/image mentioned in the input."""
 
@@ -38,8 +39,24 @@ DENYLIST_SUBSTRINGS = [
 ]
 
 
+def _strip_code_fence(text: str) -> str:
+    """Models routinely wrap output in ```bash ... ``` fences even when told
+    not to (confirmed live: LM Studio's Qwen did this on the first real run).
+    Don't rely on the system prompt alone to prevent that — strip fences
+    defensively before parsing, the same "deterministic guard, not just a
+    polite ask" principle as the deny-list below.
+    """
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()[1:]  # drop opening fence (with language tag)
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]  # drop closing fence
+        text = "\n".join(lines).strip()
+    return text
+
+
 def propose_remediation(vulnerability_summary: str) -> tuple[str, str]:
-    response = ask(SYSTEM_PROMPT, vulnerability_summary)
+    response = _strip_code_fence(ask(SYSTEM_PROMPT, vulnerability_summary))
     lines = response.strip().splitlines()
     command = lines[0].strip() if lines else ""
     rationale = " ".join(lines[1:]).strip() if len(lines) > 1 else ""
