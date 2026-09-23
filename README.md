@@ -5,6 +5,10 @@ lab: a multi-agent Python backend coordinating Ansible, Docker, Loki/Promtail, a
 by a local dashboard website — everything running against `127.0.0.1` only, on a local Qwen model
 served by LM Studio.
 
+Runs inside a VirtualBox Rocky Linux 9 VM, with LM Studio staying on the Windows host to use its
+GPU directly — see [docs/INSTALL.md](docs/INSTALL.md) for why and the full setup (WSL2 also works
+if your Windows install doesn't have a broken servicing stack; this guide covers the VM path).
+
 ## Mission
 
 Build hands-on fluency in AI-assisted DevOps security workflows — deployment automation, log
@@ -17,7 +21,9 @@ machine.
 - **Air-gapped by design:** all containers run on a Docker network created with `internal: true`
   (no outbound/inbound internet route).
 - **Loopback-only:** every service (Open-WebUI, Loki, the dashboard) binds strictly to
-  `127.0.0.1`.
+  `127.0.0.1` inside the VM; Windows only reaches them via explicit VirtualBox port-forward rules
+  also scoped to `127.0.0.1`. LM Studio on the Windows host is reachable only from the VM's private
+  host-only network, never from the LAN or internet — see docs/INSTALL.md step 9.
 - **No real secrets required:** the local LM Studio server needs no real API key; `.env.example`
   ships placeholder values only, `.env` is git-ignored.
 - **Pre-commit security checklist:** see [docs/SECURITY.md](docs/SECURITY.md) — followed before

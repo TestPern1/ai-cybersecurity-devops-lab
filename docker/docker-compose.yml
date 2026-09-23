@@ -43,14 +43,17 @@ services:
       - "127.0.0.1:${OPEN_WEBUI_PORT:-3000}:8080"
     environment:
       - WEBUI_SECRET_KEY=${OPEN_WEBUI_SECRET_KEY}
-      # Points at LM Studio running on the HOST, not inside this air-gapped
-      # network. host.docker.internal resolves to the host's loopback from
-      # inside the container without opening any external route.
+      # Points at LM Studio running on the Windows HOST machine, not inside
+      # this air-gapped network and not inside this VM. When this stack runs
+      # inside a VirtualBox VM (see docs/INSTALL.md), host.docker.internal
+      # is remapped below to the VirtualBox host-only adapter's host-side IP
+      # instead of relying on host-gateway (which would only resolve to the
+      # VM itself, not the Windows host one level up).
       - OPENAI_API_BASE_URL=http://host.docker.internal:1234/v1
       - OPENAI_API_KEY=${LM_STUDIO_API_KEY:-lm-studio}
       - WEBUI_AUTH=false
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:${HOST_LM_STUDIO_IP:-192.168.56.1}"
     volumes:
       - open_webui_data:/app/backend/data
 
