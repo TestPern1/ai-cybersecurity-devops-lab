@@ -97,7 +97,7 @@ newgrp docker
 docker run --rm hello-world
 ```
 
-## 6. Inside the VM: install Ansible, Trivy, git, Python
+## 6. Inside the VM: install Ansible, Trivy, git, Python, Node.js
 
 ```bash
 sudo dnf install -y ansible-core git python3 python3-pip
@@ -113,6 +113,26 @@ adapter, so scans run fully offline afterward:
 
 ```bash
 trivy image --download-db-only
+```
+
+Rocky 9's AppStream `nodejs` package is version 16, which is too old for this project's Vite
+version — it fails at `npm run dev` with `TypeError: crypto$2.getRandomValues is not a function`
+(Vite expects Node's global Web Crypto API, stable only from Node 20+). Install a current Node LTS
+from NodeSource instead. Do this as its own clean step — mixing NodeSource's `nodejs` (which bundles
+its own `npm` at the same file paths as the separately-packaged AppStream `npm`) with the AppStream
+packages already installed causes a `dnf` file-conflict error that `--allowerasing` does **not**
+resolve (confirmed: it's a file-path conflict, not a dependency-resolution conflict, so remove the
+old packages outright first, don't try to upgrade in place):
+
+```bash
+sudo dnf remove -y nodejs npm nodejs-full-i18n nodejs-docs
+sudo dnf clean all
+
+curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+sudo dnf install -y nodejs
+
+node --version   # should print v20.x
+npm --version
 ```
 
 ## 7. Get the project into the VM
@@ -317,6 +337,17 @@ identical from the browser (page won't load) but have different causes and fixes
 - **VM can't reach the internet during `dnf`/`npm install`:** confirm Adapter 1 is NAT and attached,
   and that the VM actually picked up a NAT-assigned address (`ip addr show` should show an
   interface in the `10.0.2.x` range in addition to the `192.168.56.x` host-only one).
+- **`npm run dev` fails with `TypeError: crypto$2.getRandomValues is not a function`:** your Node.js
+  is too old (Rocky's AppStream `nodejs` is v16; this project's Vite needs 18+, ideally 20+ — see
+  step 6). Check with `node --version`. If you try to fix it with
+  `dnf install -y nodejs --allowerasing`, that will *not* work here and fails with a file-conflict
+  error (`/usr/lib/node_modules/npm/docs ... conflicts with file from package npm-...`) — this is a
+  literal file-path collision between NodeSource's bundled `npm` and the separately-packaged
+  AppStream `npm`, which `--allowerasing` doesn't resolve (that flag is for dependency-solver
+  conflicts, not file-path collisions). Remove the old packages outright first:
+  `sudo dnf remove -y nodejs npm nodejs-full-i18n nodejs-docs`, then install fresh from NodeSource
+  (full commands in step 6). After upgrading Node, also do a clean `rm -rf node_modules
+  package-lock.json && npm install` — modules built against the old Node version can linger.
 - **From Windows: `Test-NetConnection` to a forwarded port succeeds, but the browser shows
   `ERR_CONNECTION_RESET` (or `curl.exe` shows "Recv failure: Connection was reset"):** this means
   the TCP handshake works but the actual HTTP exchange doesn't — almost always because the service
